@@ -59,6 +59,14 @@ export function getActiveLoginMethod() {
  * fall back to using password
  */
 export function getLoginMethod(req) {
+  // BY-PASS ANY OTHER CONFIGURATION TO ENSURE HEADER AUTH
+  if (
+    config.get('loginMethod') === 'header' &&
+    config.get('allowedLoginMethods').includes('header')
+  ) {
+    return config.get('loginMethod');
+  }
+
   if (
     typeof req !== 'undefined' &&
     (req.body || { loginMethod: null }).loginMethod &&
@@ -68,15 +76,9 @@ export function getLoginMethod(req) {
     const row = accountDb.first('SELECT method FROM auth WHERE method = ?', [
       req.body.loginMethod,
     ]);
-    if (row) return req.body.loginMethod;
-  }
-
-  //BY-PASS ANY OTHER CONFIGURATION TO ENSURE HEADER AUTH
-  if (
-    config.get('loginMethod') === 'header' &&
-    config.get('allowedLoginMethods').includes('header')
-  ) {
-    return config.get('loginMethod');
+    if (row || config.get('loginMethod') !== 'header') {
+      return req.body.loginMethod;
+    }
   }
 
   const activeMethod = getActiveLoginMethod();

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getAccountDb, getLoginMethod, getServerPrefs } from './account-db';
 import { bootstrapPassword } from './accounts/password';
 import { handlers as app, authRateLimiter } from './app-account';
+import { config } from './load-config';
 
 const ADMIN_ROLE = 'ADMIN';
 const BASIC_ROLE = 'BASIC';
@@ -206,10 +207,23 @@ describe('getLoginMethod()', () => {
     expect(getLoginMethod(req)).toBe('password');
   });
 
-  it('ignores a client-requested method that is not in DB', () => {
+  it('honors a client-requested allowed method even when it has no auth row', () => {
     insertAuthRow('openid', 1);
     const req = { body: { loginMethod: 'password' } };
-    expect(getLoginMethod(req)).toBe('openid');
+    expect(getLoginMethod(req)).toBe('password');
+  });
+
+  it('keeps header authentication as the fallback when the requested method is not configured', () => {
+    const originalLoginMethod = config.get('loginMethod');
+    config.set('loginMethod', 'header');
+
+    try {
+      insertAuthRow('password', 1);
+      const req = { body: { loginMethod: 'password' } };
+      expect(getLoginMethod(req)).toBe('header');
+    } finally {
+      config.set('loginMethod', originalLoginMethod);
+    }
   });
 
   it('falls back to config default when auth table is empty and no req', () => {
@@ -253,6 +267,29 @@ describe('/login', () => {
 
     expect(res.statusCode).toEqual(400);
     expect(res.body).toHaveProperty('reason', 'invalid-password');
+  });
+
+  it('should route an explicit password login to the password handler when OpenID is the only configured method', async () => {
+    insertAuthRow('openid', 1);
+
+    const res = await request(app)
+      .post('/login')
+      .send({ loginMethod: 'password', password: 'whatever' });
+
+    expect(res.statusCode).toEqual(400);
+    expect(res.body.reason).not.toEqual('Invalid redirect URL');
+    expect(res.body.reason).toEqual('invalid-password');
+  });
+
+  it('should not silently fall back to password when openid is explicitly requested but not configured', async () => {
+    await bootstrapPassword('testpassword');
+
+    const res = await request(app)
+      .post('/login')
+      .send({ loginMethod: 'openid', returnUrl: 'http://localhost/callback' });
+
+    expect(res.statusCode).toEqual(400);
+    expect(res.body.reason).toEqual('Invalid redirect URL');
   });
 });
 
